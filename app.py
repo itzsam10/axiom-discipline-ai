@@ -62,7 +62,7 @@ if not st.session_state.user_set:
     st.stop()
 
 # ─── PER-USER BANK ID ───────────────────────────────────────────────────────
-BANK_ID = "discipline-bot"  # single shared bank for all users
+BANK_ID = f"axiom-{st.session_state.username}"  # auto-created by Hindsight on first use
 
 # ─── AUTO-CREATE BANK FOR NEW USER ─────────────────────────────────────────
 def ensure_bank_exists(bank_id):
