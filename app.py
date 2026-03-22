@@ -62,7 +62,22 @@ if not st.session_state.user_set:
     st.stop()
 
 # ─── PER-USER BANK ID ───────────────────────────────────────────────────────
-BANK_ID = f"axiom-{st.session_state.username}"
+BANK_ID = "discipline-bot"  # single shared bank for all users
+
+# ─── AUTO-CREATE BANK FOR NEW USER ─────────────────────────────────────────
+def ensure_bank_exists(bank_id):
+    """Create the bank if it doesn't exist yet."""
+    try:
+        mem_client.retain(
+            bank_id=bank_id,
+            content=f"Bank initialized for user {bank_id} on {datetime.now().strftime('%d %b %Y')}."
+        )
+    except:
+        pass  # Bank already exists or any error — safe to ignore
+
+if st.session_state.user_set and not st.session_state.get(f"bank_ready_{BANK_ID}"):
+    ensure_bank_exists(BANK_ID)
+    st.session_state[f"bank_ready_{BANK_ID}"] = True
 
 # ─── HELPERS ───────────────────────────────────────────────────────────────
 def strip_tag(text):
@@ -76,18 +91,22 @@ def save_memory_bg(user_msg, ai_msg):
     def _go():
         try:
             ts = now.strftime("%d %b %Y %I:%M %p")
+            user = st.session_state.get("username", "unknown")
             mem_client.retain(
                 bank_id=BANK_ID,
-                content=f"[{ts}] {st.session_state.username}: {user_msg}. AXIOM replied: {ai_msg[:200]}"
+                content=f"[{ts}] [{user}] said: {user_msg}. AXIOM replied: {ai_msg[:200]}"
             )
         except: pass
     threading.Thread(target=_go, daemon=True).start()
 
 def recall_memory(query):
     try:
-        result = mem_client.recall(bank_id=BANK_ID, query=query)
+        user = st.session_state.get("username", "unknown")
+        result = mem_client.recall(bank_id=BANK_ID, query=f"[{user}] {query}")
         if result and hasattr(result, 'results') and result.results:
-            return " | ".join(r.text for r in result.results[:3] if hasattr(r,'text'))
+            texts = [r.text for r in result.results[:5] if hasattr(r,'text') and f"[{user}]" in r.text]
+            if texts:
+                return " | ".join(texts[:3])
     except: pass
     return "No prior records."
 
