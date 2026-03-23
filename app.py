@@ -17,12 +17,23 @@ mem_client  = Hindsight(base_url=HINDSIGHT_URL, api_key=HINDSIGHT_API_KEY)
 st.set_page_config(page_title="AXIOM · Discipline AI", page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
 
 # ─── SESSION STATE ──────────────────────────────────────────────────────────
-for k, v in {
-    "score": 820, "messages": [], "today_status": "empty",
-    "last_delta": 0, "discipline_plan": [], "plan_date": "",
-    "username": "", "user_set": False,
-    "last_fired_hour": -1, "last_fire_date": ""
-}.items():
+# New users start at 500 (not 820 — that's Samith's real score)
+DEFAULTS = {
+    "score": 500,           # new users start at 500
+    "messages": [],
+    "today_status": "empty",
+    "last_delta": 0,
+    "discipline_plan": [],
+    "plan_date": "",
+    "username": "",
+    "user_set": False,
+    "last_fired_hour": -1,
+    "last_fire_date": "",
+    "is_samith": False,     # track if this is the primary user
+    "onboarded": False,     # has user completed onboarding questions
+    "user_goals": [],       # goals collected during onboarding
+}
+for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -30,13 +41,16 @@ now       = datetime.now()
 today_str = str(date.today())
 pct       = round((st.session_state.score / 1000) * 100, 1)
 
-# ─── USER LOGIN SCREEN ──────────────────────────────────────────────────────
+# ─── LOGIN SCREEN ───────────────────────────────────────────────────────────
 if not st.session_state.user_set:
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap');
-    html,body,.stApp{background:#060A0F !important;font-family:'Outfit',sans-serif !important;}
+    html,body,.stApp{background:#060A0F !important;font-family:'Outfit',sans-serif !important;color:#D8E6F3 !important;}
     #MainMenu,header,footer{display:none !important;}
+    .block-container{padding:3rem !important;}
+    .stTextInput input{background:#0D1219 !important;border:1px solid #1A2535 !important;border-radius:10px !important;color:#D8E6F3 !important;font-size:1rem !important;}
+    .stButton button{background:linear-gradient(135deg,#2563EB,#1A3A80) !important;color:white !important;border:none !important;border-radius:10px !important;font-size:1rem !important;font-weight:600 !important;}
     </style>
     """, unsafe_allow_html=True)
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -44,40 +58,34 @@ if not st.session_state.user_set:
     with col2:
         st.markdown("""
         <div style='text-align:center;margin-bottom:32px;'>
-            <div style='font-size:3rem;font-weight:900;color:#EEF5FF;letter-spacing:-2px;'>AXIOM</div>
-            <div style='font-size:.8rem;color:#4A6888;letter-spacing:3px;text-transform:uppercase;margin-top:4px;'>Discipline Intelligence Engine</div>
+            <div style='font-size:3.5rem;font-weight:900;color:#EEF5FF;letter-spacing:-2px;'>AXIOM</div>
+            <div style='font-size:.75rem;color:#4A6888;letter-spacing:3px;text-transform:uppercase;margin-top:6px;'>Discipline Intelligence Engine</div>
+            <div style='font-size:.85rem;color:#3A5070;margin-top:12px;'>Your personal accountability AI — remembers everything.</div>
         </div>
         """, unsafe_allow_html=True)
-        name = st.text_input("Enter your name to begin:", placeholder="e.g. Samith", key="name_input")
+        name = st.text_input("Enter your name to begin:", placeholder="e.g. Samith, Raj, Priya...", key="name_input")
         if st.button("Start Session →", use_container_width=True):
             if name.strip():
-                st.session_state.username  = name.strip().lower().replace(" ", "-")
-                st.session_state.user_set  = True
-                st.session_state.messages  = []
-                st.session_state.score     = 820
+                uname = name.strip().lower().replace(" ", "-")
+                st.session_state.username     = uname
+                st.session_state.user_set     = True
+                st.session_state.messages     = []
+                st.session_state.discipline_plan = []
+                st.session_state.plan_date    = ""
+                st.session_state.last_delta   = 0
                 st.session_state.today_status = "empty"
+                # Samith gets his real score, new users start at 500
+                st.session_state.is_samith    = "samith" in uname
+                st.session_state.score        = 820 if "samith" in uname else 500
+                st.session_state.onboarded    = True if "samith" in uname else False
+                st.session_state.user_goals   = ["NeuroKey BCI","VLSI & DSP","Tinkercore","Gym","IoT Club"] if "samith" in uname else []
                 st.rerun()
             else:
                 st.error("Please enter your name.")
     st.stop()
 
-# ─── PER-USER BANK ID ───────────────────────────────────────────────────────
-BANK_ID = f"axiom-{st.session_state.username}"  # auto-created by Hindsight on first use
-
-# ─── AUTO-CREATE BANK FOR NEW USER ─────────────────────────────────────────
-def ensure_bank_exists(bank_id):
-    """Create the bank if it doesn't exist yet."""
-    try:
-        mem_client.retain(
-            bank_id=bank_id,
-            content=f"Bank initialized for user {bank_id} on {datetime.now().strftime('%d %b %Y')}."
-        )
-    except:
-        pass  # Bank already exists or any error — safe to ignore
-
-if st.session_state.user_set and not st.session_state.get(f"bank_ready_{BANK_ID}"):
-    ensure_bank_exists(BANK_ID)
-    st.session_state[f"bank_ready_{BANK_ID}"] = True
+# ─── PER-USER BANK ID (fully isolated) ──────────────────────────────────────
+BANK_ID = f"axiom-{st.session_state.username}"
 
 # ─── HELPERS ───────────────────────────────────────────────────────────────
 def strip_tag(text):
@@ -88,67 +96,73 @@ def get_pts(text):
     return int(m.group(1)) if m else None
 
 def save_memory_bg(user_msg, ai_msg):
+    """Save memory in background thread — never blocks UI."""
     def _go():
         try:
             ts = now.strftime("%d %b %Y %I:%M %p")
-            user = st.session_state.get("username", "unknown")
             mem_client.retain(
                 bank_id=BANK_ID,
-                content=f"[{ts}] [{user}] said: {user_msg}. AXIOM replied: {ai_msg[:200]}"
+                content=f"[{ts}] {st.session_state.username}: {user_msg}. AXIOM: {ai_msg[:250]}"
             )
         except: pass
     threading.Thread(target=_go, daemon=True).start()
 
 def recall_memory(query):
+    """Recall from this user's private bank only."""
     try:
-        user = st.session_state.get("username", "unknown")
-        result = mem_client.recall(bank_id=BANK_ID, query=f"[{user}] {query}")
+        result = mem_client.recall(bank_id=BANK_ID, query=query)
         if result and hasattr(result, 'results') and result.results:
-            texts = [r.text for r in result.results[:5] if hasattr(r,'text') and f"[{user}]" in r.text]
+            texts = [r.text for r in result.results[:3] if hasattr(r, 'text') and r.text]
             if texts:
-                return " | ".join(texts[:3])
+                return " | ".join(texts)
     except: pass
     return "No prior records."
 
-def generate_plan(summary):
+def generate_plan(summary, goals):
+    """Generate personalized tomorrow plan based on user's actual goals."""
+    goals_str = ", ".join(goals) if goals else "studies, health, personal projects"
     try:
-        prompt = f"""Create a realistic discipline schedule for TOMORROW for an ECE student based on: "{summary}"
+        prompt = f"""Create a realistic discipline schedule for TOMORROW for a person whose goals are: {goals_str}.
+Based on their today's report: "{summary}"
 Output ONLY a valid JSON array. Each object: {{"hour":6,"task":"Wake up and stretch","type":"health"}}
-Include 6-8 time slots. Types: health/study/project/startup/rest. JSON array only, no explanation."""
+Include 6-8 time slots covering their specific goals. Types: health/study/project/startup/rest.
+JSON array only, no explanation, no markdown."""
         resp = groq_client.chat.completions.create(
             messages=[{"role":"user","content":prompt}],
-            model="llama-3.1-8b-instant", temperature=0.3, max_tokens=400
+            model="llama-3.1-8b-instant", temperature=0.3, max_tokens=500
         )
         raw = re.sub(r'^```json|^```|```$','',resp.choices[0].message.content.strip(),flags=re.MULTILINE).strip()
-        return [{"hour":p["hour"],"task":p["task"],"type":p.get("type","study"),"fired":False} for p in json.loads(raw)]
+        return [{"hour":p["hour"],"task":p["task"],"type":p.get("type","study"),"fired":False}
+                for p in json.loads(raw)]
     except:
+        # Generic fallback — NOT Samith-specific
         return [
-            {"hour":6,"task":"Wake up — no snooze","type":"health","fired":False},
-            {"hour":8,"task":"VLSI Design — 1 chapter","type":"study","fired":False},
-            {"hour":11,"task":"DSP revision","type":"study","fired":False},
-            {"hour":14,"task":"NeuroKey — 1 hour coding","type":"project","fired":False},
-            {"hour":17,"task":"Gym session","type":"health","fired":False},
-            {"hour":19,"task":"Tinkercore / IoT Club tasks","type":"startup","fired":False},
-            {"hour":22,"task":"Wind down — sleep by 11 PM","type":"rest","fired":False},
+            {"hour":6, "task":"Wake up — no snooze",        "type":"health",  "fired":False},
+            {"hour":8, "task":"Work on top priority goal",   "type":"study",   "fired":False},
+            {"hour":11,"task":"Continue morning work",       "type":"study",   "fired":False},
+            {"hour":14,"task":"Project work — 1 hour focus", "type":"project", "fired":False},
+            {"hour":17,"task":"Exercise / gym session",      "type":"health",  "fired":False},
+            {"hour":20,"task":"Evening review + planning",   "type":"study",   "fired":False},
+            {"hour":22,"task":"Wind down — sleep by 11 PM",  "type":"rest",    "fired":False},
         ]
 
 def check_scheduled():
+    """Fire scheduled reminders at set hours."""
+    uname_display = st.session_state.username.replace("-"," ").title()
     FIXED = {
-        7:  "🌅 **Good morning!** Hope you slept well. When you're ready, let me know your targets for today — **NeuroKey**, **VLSI/DSP**, and **gym**.",
-        13: "☀️ **Midday check-in.** Half the day is done. What have you completed so far?",
-        20: "🌙 **Evening log time.** Let me know how today went — projects, coursework, gym, food.",
-        22: "🔔 **End of day.** What did you finish today? And what time are you planning to sleep?",
+        7:  f"🌅 **Good morning, {uname_display}!** When you're ready, let me know your plan for today.",
+        13: "☀️ **Midday check-in.** Half the day is done — what have you completed so far?",
+        20: "🌙 **Evening log.** How did today go? Tell me what you worked on.",
+        22: f"🔔 **End of day, {uname_display}.** What did you finish today? What time are you sleeping?",
     }
     if st.session_state.last_fire_date != today_str:
         st.session_state.last_fired_hour = -1
         st.session_state.last_fire_date  = today_str
-
     h = now.hour
     if h in FIXED and st.session_state.last_fired_hour != h:
         st.session_state.last_fired_hour = h
         st.session_state.messages.append({"role":"assistant","content":FIXED[h]})
         return True
-
     for i, item in enumerate(st.session_state.discipline_plan):
         key = f"plan_{today_str}_{item['hour']}"
         if item["hour"] == h and not item["fired"] and key not in st.session_state:
@@ -156,7 +170,7 @@ def check_scheduled():
             st.session_state.discipline_plan[i]["fired"] = True
             icons = {"health":"💪","study":"📡","project":"🧠","startup":"🚀","rest":"😴"}
             ic    = icons.get(item["type"],"📌")
-            msg   = f"⏰ **Scheduled reminder — {now.strftime('%I:%M %p')}**\n\n{ic} Time for: **{item['task']}**\n\nLet me know when you're done."
+            msg   = f"⏰ **Scheduled — {now.strftime('%I:%M %p')}**\n\n{ic} Time for: **{item['task']}**\n\nLet me know when you're done."
             st.session_state.messages.append({"role":"assistant","content":msg})
             return True
     return False
@@ -236,27 +250,41 @@ html,body,.stApp{background:#060A0F !important;font-family:'Outfit',sans-serif !
 </style>
 """, unsafe_allow_html=True)
 
-# ─── SCHEDULED CHECK ───────────────────────────────────────────────────────
+# ─── BOOT: First message logic ──────────────────────────────────────────────
+uname_display = st.session_state.username.replace("-"," ").title()
+
 if not st.session_state.messages:
-    uname = st.session_state.username.replace("-"," ").title()
-    st.session_state.messages.append({"role":"assistant","content":(
-        f"Welcome back, **{uname}**! 👋\n\n"
-        "I'm AXIOM — your personal discipline AI. I remember everything from our past sessions.\n\n"
-        "Whenever you're ready, give me today's update:\n\n"
-        "1. 🧠 **NeuroKey** — Progress today?\n"
-        "2. 📡 **VLSI / DSP** — Coursework done?\n"
-        "3. 💪 **Gym** — Did you go? Diet on track?\n"
-        "4. 🚀 **Tinkercore / IoT Club** — Any tasks completed?\n"
-        "5. 😴 **Sleep** — How many hours last night?\n\n"
-        "Or just say good morning — we can start from there."
-    )})
+    if st.session_state.is_samith:
+        # Samith gets his full personalised check-in
+        boot_msg = (
+            f"Welcome back, **{uname_display}**! 👋\n\n"
+            "Ready for today's accountability check. Give me your update:\n\n"
+            "1. 🧠 **NeuroKey** — Progress today?\n"
+            "2. 📡 **VLSI / DSP** — Coursework done?\n"
+            "3. 💪 **Gym** — Did you go? Diet on track?\n"
+            "4. 🚀 **Tinkercore / IoT Club** — Any tasks completed?\n"
+            "5. 😴 **Sleep** — How many hours last night?\n\n"
+            "Or just say good morning — we can start from there."
+        )
+    else:
+        # New user — AXIOM introduces itself and starts collecting their info
+        boot_msg = (
+            f"Hey **{uname_display}**! 👋 I'm **AXIOM** — your personal discipline AI.\n\n"
+            "I remember everything you tell me across sessions, track your progress, "
+            "and hold you accountable to your goals over time.\n\n"
+            "To get started, tell me a bit about yourself:\n\n"
+            "1. 🎯 **What are you currently working on?** (studies, job, projects, startup?)\n"
+            "2. 💪 **What health goals do you have?** (gym, diet, sleep?)\n"
+            "3. 📅 **What's your biggest challenge right now?**\n\n"
+            "The more you tell me, the better I can help you stay on track. Go ahead!"
+        )
+    st.session_state.messages.append({"role":"assistant","content":boot_msg})
 
 if check_scheduled():
     st.rerun()
 
 # ─── SIDEBAR ───────────────────────────────────────────────────────────────
 with st.sidebar:
-    uname_display = st.session_state.username.replace("-"," ").title()
     st.markdown(
         f'<div class="brand">{LOGO_SM}<span class="bname">AXIOM</span></div>'
         f'<div class="btag">Discipline Intelligence Engine</div>'
@@ -265,87 +293,187 @@ with st.sidebar:
         f'<div class="pill pb"><span class="dot db"></span>Groq LLM: CONNECTED</div>',
         unsafe_allow_html=True
     )
+
+    # Heatmap — only Samith gets fake historical data, others start all empty
     st.markdown('<div class="sec">30-Day Activity</div>', unsafe_allow_html=True)
-    past=["ha","ha","hf","ha","ha","ha","he","ha","hf","ha","ha","ha","ha","hf","ha","ha","ha","he","ha","ha","ha","ha","ha","hf","ha","ha","he","ha","ha"]
-    tc={"empty":"he ht","active":"ha ht","fail":"hf ht"}.get(st.session_state.today_status,"he ht")
-    boxes="".join(f'<span class="hm {c}"></span>' for c in past)+f'<span class="hm {tc}" title="Today"></span>'
-    st.markdown(f'<div class="hmap">{boxes}</div><div class="hleg"><span><span class="hd" style="background:#2563EB"></span>On Track</span><span><span class="hd" style="background:#DC2626"></span>Excused</span><span><span class="hd" style="background:#0D1520;border:1px solid #182030"></span>Rest</span></div>', unsafe_allow_html=True)
+    if st.session_state.is_samith:
+        past = ["ha","ha","hf","ha","ha","ha","he","ha","hf","ha","ha","ha",
+                "ha","hf","ha","ha","ha","he","ha","ha","ha","ha","ha","hf",
+                "ha","ha","he","ha","ha"]
+    else:
+        # New users — all empty, only today's box is dynamic
+        past = ["he"] * 29
+
+    tc = {"empty":"he ht","active":"ha ht","fail":"hf ht"}.get(st.session_state.today_status,"he ht")
+    boxes = "".join(f'<span class="hm {c}"></span>' for c in past)
+    boxes += f'<span class="hm {tc}" title="Today"></span>'
+    st.markdown(
+        f'<div class="hmap">{boxes}</div>'
+        f'<div class="hleg">'
+        f'<span><span class="hd" style="background:#2563EB"></span>On Track</span>'
+        f'<span><span class="hd" style="background:#DC2626"></span>Excused</span>'
+        f'<span><span class="hd" style="background:#0D1520;border:1px solid #182030"></span>Rest</span>'
+        f'</div>', unsafe_allow_html=True
+    )
+
+    # Goals — Samith's specific goals vs dynamic goals for others
     st.markdown('<div class="sec">Active Targets</div>', unsafe_allow_html=True)
-    for em,t,s in [("🧠","NeuroKey BCI","EEG + Python Capstone"),("📡","VLSI & DSP","VTU Coursework"),("🚀","Tinkercore","Startup · ECE Outreach"),("💪","Gym & Nutrition","Hostel Diet · Strength"),("🔩","IoT Club","Leadership · Workshops")]:
-        st.markdown(f'<div class="gc"><span class="ge">{em}</span><div><span class="gt">{t}</span><span class="gs">{s}</span></div></div>', unsafe_allow_html=True)
+    if st.session_state.is_samith:
+        goals_display = [
+            ("🧠","NeuroKey BCI",    "EEG + Python Capstone"),
+            ("📡","VLSI & DSP",      "VTU Coursework"),
+            ("🚀","Tinkercore",      "Startup · ECE Outreach"),
+            ("💪","Gym & Nutrition", "Hostel Diet · Strength"),
+            ("🔩","IoT Club",        "Leadership · Workshops"),
+        ]
+    elif st.session_state.user_goals:
+        # Goals collected during onboarding
+        icons_map = ["🎯","📚","💪","🚀","😴","🔩","⚡"]
+        goals_display = [(icons_map[i % len(icons_map)], g, "Your goal") for i,g in enumerate(st.session_state.user_goals)]
+    else:
+        goals_display = [
+            ("🎯","Your Goals",  "Tell AXIOM to get started"),
+            ("📚","Studies",     "Coursework & learning"),
+            ("💪","Health",      "Gym, diet & sleep"),
+            ("🚀","Projects",    "Work & side projects"),
+            ("😴","Recovery",    "Rest & mental health"),
+        ]
+
+    for em, t, s in goals_display:
+        st.markdown(
+            f'<div class="gc"><span class="ge">{em}</span>'
+            f'<div><span class="gt">{t}</span><span class="gs">{s}</span></div></div>',
+            unsafe_allow_html=True
+        )
+
+    # Tomorrow's plan
     if st.session_state.discipline_plan:
         st.markdown("<div class='sec'>📋 Tomorrow's Plan</div>", unsafe_allow_html=True)
-        icons={"health":"💪","study":"📡","project":"🧠","startup":"🚀","rest":"😴"}
+        icons = {"health":"💪","study":"📡","project":"🧠","startup":"🚀","rest":"😴"}
         for item in st.session_state.discipline_plan:
-            h=item["hour"]; ap="AM" if h<12 else "PM"; h12=h if h<=12 else h-12; h12=12 if h12==0 else h12
-            ic=icons.get(item["type"],"📌"); dc="plan-done" if item["fired"] else ""
-            st.markdown(f'<div class="plan-item"><span class="plan-time">{h12}{ap}</span><span class="plan-task {dc}">{ic} {item["task"]}</span></div>', unsafe_allow_html=True)
+            h  = item["hour"]
+            ap = "AM" if h < 12 else "PM"
+            h12 = h if h <= 12 else h - 12
+            h12 = 12 if h12 == 0 else h12
+            ic = icons.get(item["type"],"📌")
+            dc = "plan-done" if item["fired"] else ""
+            st.markdown(
+                f'<div class="plan-item">'
+                f'<span class="plan-time">{h12}{ap}</span>'
+                f'<span class="plan-task {dc}">{ic} {item["task"]}</span>'
+                f'</div>', unsafe_allow_html=True
+            )
 
     st.markdown('<div class="sec">Session</div>', unsafe_allow_html=True)
     if st.button("Switch User", use_container_width=True):
-        for k in ["username","user_set","messages","score","today_status","last_delta","discipline_plan","plan_date"]:
-            st.session_state[k] = "" if k in ["username"] else (False if k=="user_set" else ([] if k in ["messages","discipline_plan"] else (820 if k=="score" else ("empty" if k=="today_status" else (0 if k=="last_delta" else "")))))
+        # Reset ALL state cleanly
+        for k in list(DEFAULTS.keys()):
+            st.session_state[k] = DEFAULTS[k]
         st.rerun()
 
-# ─── MAIN ──────────────────────────────────────────────────────────────────
-st.markdown(f'<div class="mhdr">{LOGO_LG}<div><div class="mtitle">AXIOM</div><div class="msub">Discipline Intelligence &nbsp;·&nbsp; Persistent Memory &nbsp;·&nbsp; No Excuses</div></div></div>', unsafe_allow_html=True)
+# ─── MAIN AREA ─────────────────────────────────────────────────────────────
+st.markdown(
+    f'<div class="mhdr">{LOGO_LG}'
+    f'<div><div class="mtitle">AXIOM</div>'
+    f'<div class="msub">Discipline Intelligence &nbsp;·&nbsp; Persistent Memory &nbsp;·&nbsp; No Excuses</div>'
+    f'</div></div>',
+    unsafe_allow_html=True
+)
 
-d=st.session_state.last_delta
-dhtml=f'<div class="cup">▲ +{d} pts</div>' if d>0 else (f'<div class="cdn">▼ {d} pts</div>' if d<0 else '<div class="cne">— Awaiting log</div>')
-sc=st.session_state.today_status
-sc_col={"active":"#22C55E","fail":"#DC2626"}.get(sc,"#1E3050")
-sc_lbl={"active":"🟢 On Track","fail":"🔴 Off Track","empty":"⏳ Pending"}.get(sc,"⏳ Pending")
+d     = st.session_state.last_delta
+dhtml = (f'<div class="cup">▲ +{d} pts</div>' if d > 0 else
+         f'<div class="cdn">▼ {d} pts</div>'   if d < 0 else
+         '<div class="cne">— Awaiting log</div>')
+sc     = st.session_state.today_status
+sc_col = {"active":"#22C55E","fail":"#DC2626"}.get(sc,"#1E3050")
+sc_lbl = {"active":"🟢 On Track","fail":"🔴 Off Track","empty":"⏳ Pending"}.get(sc,"⏳ Pending")
 
 st.markdown(f"""<div class="crow">
-<div class="card"><div class="clabel">Discipline Score</div><div class="cval">{st.session_state.score}<span class="cunit"> /1000</span></div><div class="cbar"><div class="cbarf" style="width:{pct}%"></div></div></div>
-<div class="card"><div class="clabel">Consistency Rate</div><div class="cval">{pct}<span class="cunit">%</span></div><div class="cbar"><div class="cbarf" style="width:{pct}%"></div></div></div>
-<div class="card"><div class="clabel">Today's Status</div><div class="cstat" style="color:{sc_col}">{sc_lbl}</div>{dhtml}</div>
-<div class="card"><div class="clabel">Memory Bank</div><div class="cstat" style="color:#38BDF8">ACTIVE</div><div class="cup">Hindsight · {BANK_ID}</div></div>
+  <div class="card">
+    <div class="clabel">Discipline Score</div>
+    <div class="cval">{st.session_state.score}<span class="cunit"> /1000</span></div>
+    <div class="cbar"><div class="cbarf" style="width:{pct}%"></div></div>
+  </div>
+  <div class="card">
+    <div class="clabel">Consistency Rate</div>
+    <div class="cval">{pct}<span class="cunit">%</span></div>
+    <div class="cbar"><div class="cbarf" style="width:{pct}%"></div></div>
+  </div>
+  <div class="card">
+    <div class="clabel">Today's Status</div>
+    <div class="cstat" style="color:{sc_col}">{sc_lbl}</div>
+    {dhtml}
+  </div>
+  <div class="card">
+    <div class="clabel">Memory Bank</div>
+    <div class="cstat" style="color:#38BDF8">ACTIVE</div>
+    <div class="cup">Hindsight · {BANK_ID}</div>
+  </div>
 </div>""", unsafe_allow_html=True)
+
 st.markdown('<hr class="div">', unsafe_allow_html=True)
 
+# Chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar="👤" if msg["role"]=="user" else "🛡️"):
         st.markdown(msg["content"])
 
 # ─── INPUT ─────────────────────────────────────────────────────────────────
-user_input = st.chat_input("Say good morning, log your progress, or ask anything...")
+user_input = st.chat_input("Tell me about yourself, or log your progress...")
 
 if user_input:
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_input)
     st.session_state.messages.append({"role":"user","content":user_input})
 
+    # Recall from this user's private memory bank
     mem = recall_memory(user_input)
-    uname_display = st.session_state.username.replace("-"," ").title()
 
-    SYSTEM = f"""You are AXIOM — a respectful but firm accountability AI mentor for {uname_display}.
+    # Build user profile — specific for Samith, dynamic for others
+    if st.session_state.is_samith:
+        user_profile = (
+            "- ECE student, Batch 2023-2027, East Point College Bengaluru\n"
+            "- Subjects: VLSI Design, Digital Signal Processing\n"
+            "- Capstone: NeuroKey (BCI using EEG + Python)\n"
+            "- Leads IoT Club, building startup Tinkercore, rides Royal Enfield Bullet\n"
+            "- Hostel life, gym goals, diet constraints"
+        )
+        goals_context = "NeuroKey BCI, VLSI, DSP, Tinkercore, IoT Club, gym"
+    else:
+        goals_context = ", ".join(st.session_state.user_goals) if st.session_state.user_goals else "not yet collected — learn from conversation"
+        user_profile  = (
+            f"- New user — currently learning their goals from conversation\n"
+            f"- Known goals so far: {goals_context}\n"
+            f"- Keep asking questions to understand their work, studies, health, projects"
+        )
+
+    SYSTEM = f"""You are AXIOM — a warm but firm accountability AI mentor for {uname_display}.
 
 USER PROFILE:
 - Name: {uname_display}
-- ECE student, Batch 2023-2027, East Point College Bengaluru
-- Subjects: VLSI Design, Digital Signal Processing
-- Capstone: NeuroKey (BCI using EEG + Python)
-- Leads IoT Club, building startup Tinkercore, rides Royal Enfield Bullet
-- Hostel life, gym goals, diet constraints
+{user_profile}
 
-HINDSIGHT MEMORY (past sessions for {uname_display} only): {mem}
+HINDSIGHT MEMORY (this user's private history): {mem}
 
-TONE & BEHAVIOR RULES:
-1. Always greet warmly if the user says "good morning", "hi", "hello" etc. Respond naturally first, THEN gently ask about their day.
-2. Do NOT jump straight into task interrogation for casual messages.
-3. Be respectful and encouraging when they do well. Be firm but not aggressive when they slack.
-4. Use their name occasionally — it feels personal.
-5. Max 4 sentences per response unless giving a plan. Dense and clear.
-6. **Bold** project names, key wins, failures.
-7. If memory has past data, reference it naturally with the date.
-8. If they report a full day update → end with "I'll build your plan for tomorrow."
-9. MANDATORY last line: [SCORE:+X] or [SCORE:-Y]. X=5-25 for progress, Y=10-30 for excuses.
-   Casual greetings with no update → [SCORE:+0] is NOT valid — omit scoring for pure greetings.
-   Only score when there is actual progress or excuse content to evaluate."""
+BEHAVIOR RULES:
+1. Greet naturally for casual messages ("hi", "good morning" etc). Don't interrogate immediately.
+2. For NEW users who haven't shared goals yet: ask ONE question at a time to learn about them.
+   Ask about: what they're studying/working on, their health goals, their biggest challenge.
+   Once you learn their goals, confirm them and say you'll track these from now on.
+3. For users with known goals: check in on those specific goals. Reference memory with dates.
+4. Be respectful and encouraging for progress. Be firm but not harsh for excuses.
+5. Use their name occasionally.
+6. Max 4 sentences unless giving a full plan.
+7. **Bold** key project names, wins, failures.
+8. If memory has relevant past data, cite it naturally with the date.
+9. If they give a full day update → end with "I'll build your plan for tomorrow."
+10. SCORING — mandatory when there is actual progress/excuse content:
+    Progress/discipline → [SCORE:+X] where X is 5-25
+    Excuses/laziness   → [SCORE:-Y] where Y is 10-30
+    Pure greeting with no update → skip scoring entirely, do NOT add [SCORE:+0]"""
 
     with st.chat_message("assistant", avatar="🛡️"):
-        ph = st.empty()
+        ph   = st.empty()
         full = ""
         try:
             msgs = [{"role":"system","content":SYSTEM}]
@@ -362,14 +490,15 @@ TONE & BEHAVIOR RULES:
                 tok = chunk.choices[0].delta.content
                 if tok:
                     full += tok
-                    ph.markdown(strip_tag(full)+" ▌")
+                    ph.markdown(strip_tag(full) + " ▌")
             clean = strip_tag(full)
             ph.markdown(clean)
         except Exception as e:
             clean = f"Connection error — {e}"
             ph.error(clean)
-            full = clean
+            full  = clean
 
+    # Update score
     pts = get_pts(full)
     if pts is not None and pts != 0:
         st.session_state.score        = max(0, min(1000, st.session_state.score + pts))
@@ -378,21 +507,49 @@ TONE & BEHAVIOR RULES:
 
     clean = strip_tag(full)
     st.session_state.messages.append({"role":"assistant","content":clean})
+
+    # Save to Hindsight memory (background, non-blocking)
     save_memory_bg(user_input, clean)
 
+    # Extract goals from new user's messages and store them
+    if not st.session_state.is_samith and not st.session_state.onboarded:
+        goal_keywords = ["study","studying","working on","project","startup","gym","fitness",
+                         "course","college","job","internship","coding","engineering","design"]
+        if any(w in user_input.lower() for w in goal_keywords):
+            # Ask Groq to extract goals from what the user said
+            try:
+                goal_resp = groq_client.chat.completions.create(
+                    messages=[{"role":"user","content":
+                        f"Extract 2-4 short goal labels from this text: '{user_input}'. "
+                        f"Return ONLY a JSON array of short strings. Example: [\"DSP studies\",\"gym\",\"startup\"]. "
+                        f"Nothing else."}],
+                    model="llama-3.1-8b-instant", temperature=0.1, max_tokens=100
+                )
+                raw_goals = re.sub(r'^```json|^```|```$','',goal_resp.choices[0].message.content.strip(),flags=re.MULTILINE).strip()
+                extracted = json.loads(raw_goals)
+                if isinstance(extracted, list) and extracted:
+                    existing = st.session_state.user_goals
+                    new_goals = [g for g in extracted if g not in existing]
+                    st.session_state.user_goals = (existing + new_goals)[:6]
+            except: pass
+
+    # Generate discipline plan after a full day report
     is_report = any(w in user_input.lower() for w in [
-        "today","did","done","gym","slept","sleep","neurokey","vlsi","dsp",
-        "club","finished","worked","completed","skipped","missed"
+        "today","did","done","gym","slept","sleep","finished","worked",
+        "completed","skipped","missed","studied","worked out"
     ])
     if is_report and st.session_state.plan_date != today_str:
         with st.spinner("⚙️ Building your discipline plan for tomorrow..."):
-            plan = generate_plan(user_input)
+            plan = generate_plan(user_input, st.session_state.user_goals)
         st.session_state.discipline_plan = plan
-        st.session_state.plan_date = today_str
-        icons={"health":"💪","study":"📡","project":"🧠","startup":"🚀","rest":"😴"}
-        plan_msg = f"📋 **{uname_display}'s Discipline Plan for Tomorrow**\n\n"
+        st.session_state.plan_date       = today_str
+        icons     = {"health":"💪","study":"📡","project":"🧠","startup":"🚀","rest":"😴"}
+        plan_msg  = f"📋 **{uname_display}'s Discipline Plan for Tomorrow**\n\n"
         for item in plan:
-            h=item["hour"]; ap="AM" if h<12 else "PM"; h12=h if h<=12 else h-12; h12=12 if h12==0 else h12
+            h   = item["hour"]
+            ap  = "AM" if h < 12 else "PM"
+            h12 = h if h <= 12 else h - 12
+            h12 = 12 if h12 == 0 else h12
             plan_msg += f"**{h12}:00 {ap}** — {icons.get(item['type'],'📌')} {item['task']}\n\n"
         plan_msg += "_I'll remind you at each scheduled time when the app is open. Stay consistent._"
         st.session_state.messages.append({"role":"assistant","content":plan_msg})
