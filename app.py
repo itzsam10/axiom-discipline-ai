@@ -150,14 +150,14 @@ def update_heatmap(status: str):
     st.session_state.heatmap = hmap[-30:]
 
 def build_heatmap_html() -> str:
-    """Build 30 boxes. Real dates only — no fake history for new users."""
+    """Build 30 boxes. Always renders 30 boxes, even if history is empty."""
     hmap_dict = {item["date"]: item["status"] for item in st.session_state.heatmap}
     boxes = ""
     today = date.today()
     for i in range(29, -1, -1):
         d   = today - timedelta(days=i)
         ds  = str(d)
-        s   = hmap_dict.get(ds, "he")
+        s   = hmap_dict.get(ds, "he") # Defaults to empty box 'he'
         tip = ds
         if i == 0:
             s   = get_heatmap_today_class()
@@ -282,12 +282,12 @@ st.markdown("""
 *,*::before,*::after{box-sizing:border-box;}
 html,body,.stApp{background:#060A0F !important;font-family:'Outfit',sans-serif !important;color:#D8E6F3 !important;}
 
-/* Fix: Make the header transparent but keep it active so the sidebar toggle is clickable */
-[data-testid="stHeader"] {background-color: transparent !important; box-shadow: none !important;}
+/* Fix: Header transparent but active so the sidebar open button is always visible! */
+[data-testid="stHeader"] {background-color: transparent !important; z-index: 99999 !important;}
 #MainMenu, footer, .stDeployButton, [data-testid="stToolbar"], [data-testid="stDecoration"] {display:none !important;}
 
 .block-container{padding:1.8rem 2.5rem 5rem !important;max-width:100% !important;width:100% !important;}
-::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:#090E16;}::-webkit-scrollbar-thumb{background:#1C2B3A;border-radius:4px;}
+::-webkit-scrollbar{width:6px;}::-webkit-scrollbar-track{background:#090E16;}::-webkit-scrollbar-thumb{background:#1C2B3A;border-radius:10px;}
 
 /* Upgraded Sidebar Styling */
 [data-testid="stSidebar"]{background:#07090F !important;border-right:1px solid #1A2535 !important;width:300px !important;min-width:300px !important;}
@@ -308,8 +308,8 @@ html,body,.stApp{background:#060A0F !important;font-family:'Outfit',sans-serif !
 .sec{font-family:'DM Mono',monospace;font-size:.68rem;color:#4A6888;letter-spacing:1.8px;text-transform:uppercase;margin:18px 0 9px;padding-bottom:6px;border-bottom:1px solid #1A2535;font-weight:500;}
 
 .hmap{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;width:100%;}
-.hm{aspect-ratio:1;border-radius:3px;transition:transform .12s;cursor:default;min-width:0;}
-.hm:hover{transform:scale(1.4);}
+.hm{aspect-ratio:1;border-radius:3px;transition:transform .15s ease;cursor:default;min-width:0;}
+.hm:hover{transform:scale(1.4); z-index:10;}
 .he{background:#0D1520;border:1px solid #1A2535;}
 .ha{background:#2563EB;box-shadow:0 0 4px rgba(37,99,235,.6);}
 .hf{background:#DC2626;box-shadow:0 0 4px rgba(220,38,38,.55);}
@@ -352,7 +352,9 @@ html,body,.stApp{background:#060A0F !important;font-family:'Outfit',sans-serif !
 
 .div{border:none;border-top:1px solid #111A26;margin:0 0 20px;}
 
-[data-testid="stChatMessage"]{background:transparent !important;border:none !important;padding:14px 0 !important;border-bottom:1px solid #0D1520 !important;}
+/* Chat Message Styling with Animation */
+@keyframes slideUp { from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: translateY(0);} }
+[data-testid="stChatMessage"]{animation: slideUp 0.3s ease-out; background:transparent !important;border:none !important;padding:14px 0 !important;border-bottom:1px solid #0D1520 !important;}
 [data-testid="chatAvatarIcon-user"]{background:#111D2C !important;border:1px solid #1C2D40 !important;border-radius:9px !important;}
 [data-testid="chatAvatarIcon-assistant"]{background:linear-gradient(135deg,#1E4A8A,#0F2A5A) !important;border:1px solid #2A5FAD !important;border-radius:9px !important;box-shadow:0 0 10px rgba(37,99,235,.35) !important;}
 [data-testid="stChatMessage"] p{font-family:'Outfit',sans-serif !important;font-size:1.05rem !important;font-weight:400 !important;line-height:1.75 !important;color:#C8D8EC !important;}
@@ -454,7 +456,7 @@ if not st.session_state.profile_loaded:
         # No Hindsight profile found
         uname_check = st.session_state.username
         if "samith" in uname_check:
-            # Samith's pre-seeded data — his real profile
+            # Samith's pre-seeded data — ensuring profile works smoothly
             st.session_state.score        = 820
             st.session_state.onboard_step = 2
             st.session_state.is_new_user  = False
@@ -490,6 +492,7 @@ if not st.session_state.profile_loaded:
             # Genuine new user
             st.session_state.is_new_user  = True
             st.session_state.onboard_step = 0
+            st.session_state.heatmap = [] # Ensures empty list for new users
     st.session_state.profile_loaded = True
 
 pct   = round((st.session_state.score / 1000) * 100, 1)
@@ -551,24 +554,18 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    # ── HEATMAP ──
+    # ── HEATMAP ── 
+    # Always render the boxes, even if they are empty!
     st.markdown('<div class="sec">30-Day Activity</div>', unsafe_allow_html=True)
-    if st.session_state.heatmap or st.session_state.today_status != "empty":
-        hmap_html = build_heatmap_html()
-        st.markdown(
-            f'<div class="hmap">{hmap_html}</div>'
-            f'<div class="hleg">'
-            f'<span><span class="hd" style="background:#2563EB"></span>On Track</span>'
-            f'<span><span class="hd" style="background:#DC2626"></span>Excused</span>'
-            f'<span><span class="hd" style="background:#0D1520;border:1px solid #182030"></span>Pending</span>'
-            f'</div>', unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            '<div style="font-family:\'DM Mono\',monospace;font-size:.65rem;color:#253545;padding:8px 0;">'
-            'Your activity will appear here as you log progress.</div>',
-            unsafe_allow_html=True
-        )
+    hmap_html = build_heatmap_html()
+    st.markdown(
+        f'<div class="hmap">{hmap_html}</div>'
+        f'<div class="hleg">'
+        f'<span><span class="hd" style="background:#2563EB"></span>On Track</span>'
+        f'<span><span class="hd" style="background:#DC2626"></span>Excused</span>'
+        f'<span><span class="hd" style="background:#0D1520;border:1px solid #182030"></span>Pending</span>'
+        f'</div>', unsafe_allow_html=True
+    )
 
     # ── GOALS ──
     st.markdown('<div class="sec">Active Targets</div>', unsafe_allow_html=True)
