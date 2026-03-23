@@ -442,9 +442,45 @@ if not st.session_state.profile_loaded:
                 }
                 st.session_state.messages.append(separator)
     else:
-        # Brand new user
-        st.session_state.is_new_user  = True
-        st.session_state.onboard_step = 0
+        # No Hindsight profile found
+        uname_check = st.session_state.username
+        if "samith" in uname_check:
+            # Samith's pre-seeded data — his real profile
+            st.session_state.score        = 820
+            st.session_state.onboard_step = 2
+            st.session_state.is_new_user  = False
+            st.session_state.total_sessions = 15
+            st.session_state.streak       = 5
+            st.session_state.today_status = "empty"
+            st.session_state.goals = [
+                {"icon":"🧠","label":"NeuroKey BCI",    "detail":"EEG + Python Capstone"},
+                {"icon":"📡","label":"VLSI & DSP",      "detail":"VTU Coursework"},
+                {"icon":"🚀","label":"Tinkercore",      "detail":"Startup · ECE Outreach"},
+                {"icon":"💪","label":"Gym & Nutrition", "detail":"Hostel Diet · Strength"},
+                {"icon":"🔩","label":"IoT Club",        "detail":"Leadership · Workshops"},
+            ]
+            # Seed 30-day heatmap with realistic history
+            from datetime import timedelta
+            history_pattern = ["active","active","fail","active","active","active","empty",
+                               "active","fail","active","active","active","active","fail",
+                               "active","active","active","empty","active","active","active",
+                               "active","active","fail","active","active","empty","active","active"]
+            hmap = []
+            for i, status in enumerate(history_pattern):
+                d = date.today() - timedelta(days=29-i)
+                hmap.append({"date": str(d), "status": status})
+            st.session_state.heatmap = hmap
+            st.session_state.last_session_date = str(date.today() - timedelta(days=1))
+            st.session_state.last_session_summary = (
+                "Samith worked on NeuroKey EEG signal processing, "
+                "completed DSP assignment, and hit the gym."
+            )
+            # Save this seeded profile to Hindsight so it persists
+            save_profile()
+        else:
+            # Genuine new user
+            st.session_state.is_new_user  = True
+            st.session_state.onboard_step = 0
     st.session_state.profile_loaded = True
 
 pct   = round((st.session_state.score / 1000) * 100, 1)
